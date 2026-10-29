@@ -1,0 +1,56 @@
+name: Hash-tail search
+
+# Manual trigger only. Nothing in this file contains a wallet, a token,
+# an attempt id, or a prefix: those are supplied at dispatch time in the
+# Actions UI and are not stored in the repository.
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: "Search prefix, ending in ':' (72 bytes for tail_range)"
+        required: true
+        type: string
+      bits:
+        description: "Leading zero bits required"
+        required: false
+        default: "33"
+        type: string
+      start_base:
+        description: "First nonce of chunk 0"
+        required: false
+        default: "2000000000"
+        type: string
+      chunk_size:
+        description: "Nonces per job"
+        required: false
+        default: "400000000"
+        type: string
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build solver
+        run: gcc -O3 -march=native -pthread -o tail_range tail_range.c
+      - name: Search chunk
+        run: |
+          START=$(( ${{ inputs.start_base }} + ${{ matrix.chunk }} * ${{ inputs.chunk_size }} ))
+          echo "chunk=${{ matrix.chunk }} start=$START count=${{ inputs.chunk_size }}"
+          ./tail_range "${{ inputs.prefix }}" "${{ inputs.bits }}" 2 "$START" "${{ inputs.chunk_size }}" 2> search.log | tee result.json
+          cat search.log
+          NONCE=$(python3 -c "import json; print(json.load(open('result.json'))['nonce'])")
+          echo "nonce=$NONCE"
+          if [ "$NONCE" != "None" ]; then echo "FOUND nonce=$NONCE chunk=${{ matrix.chunk }} start=$START"; fi
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-chunk-${{ matrix.chunk }}
+          path: |
+            result.json
+            search.log
